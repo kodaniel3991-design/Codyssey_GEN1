@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM 기반 업무 자동화 — 회의록 요약</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#141726; --ink2:#1B1F33; --ink3:#232842; --rule:#2E3350;
+  --fg:#E9E7E2; --dim:#8D93B0;
+  --ch1:#5EC8D8; --ch2:#E86FA9; --ch3:#E5C355;
+  --flag:#FF6B6B; --ok:#6FD79B;
+  --sans:"IBM Plex Sans KR","Pretendard","Apple SD Gothic Neo","Malgun Gothic","맑은 고딕","Noto Sans KR",system-ui,sans-serif;
+  --mono:"IBM Plex Mono","SFMono-Regular","Consolas","D2Coding","Menlo","Apple SD Gothic Neo","Malgun Gothic",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--ink);color:var(--fg);font-family:var(--sans);font-weight:300;overflow:hidden;-webkit-font-smoothing:antialiased}
+
+.stage{height:100vh;height:100dvh;display:grid;grid-template-rows:auto 1fr auto;padding:clamp(14px,2.2vw,32px);gap:clamp(10px,1.5vw,20px);max-width:1680px;margin:0 auto}
+
+.topbar{display:flex;align-items:baseline;justify-content:space-between;gap:16px;border-bottom:1px solid var(--rule);padding-bottom:9px}
+.eyebrow{font-family:var(--mono);font-size:clamp(9.5px,.75vw,12.5px);letter-spacing:.16em;text-transform:uppercase;color:var(--dim);display:flex;align-items:center;gap:13px}
+.eyebrow .idx{color:var(--fg);font-weight:600}
+.clock{font-family:var(--mono);font-size:clamp(10px,.8vw,13px);color:var(--dim)}
+
+.scenes{position:relative;min-height:0}
+.scene{position:absolute;inset:0;display:flex;flex-direction:column;gap:clamp(10px,1.4vw,20px);opacity:0;pointer-events:none;transition:opacity .5s ease;min-height:0;overflow-y:auto;overflow-x:hidden}
+.scene::-webkit-scrollbar{width:6px}
+.scene::-webkit-scrollbar-thumb{background:var(--rule);border-radius:3px}
+.scene::-webkit-scrollbar-track{background:transparent}
+.scene.on{opacity:1;pointer-events:auto}
+
+.kicker{font-family:var(--mono);font-size:clamp(9.5px,.72vw,11.5px);letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+h1{font-weight:700;font-size:clamp(28px,4.2vw,62px);line-height:1.08;letter-spacing:-.02em}
+h2{font-weight:600;font-size:clamp(19px,2.2vw,33px);line-height:1.2;letter-spacing:-.01em}
+.lede{font-size:clamp(12px,1vw,17px);line-height:1.75;color:var(--dim);max-width:66ch}
+
+.title-wrap{flex:1;display:flex;flex-direction:column;justify-content:center;gap:clamp(12px,1.7vw,24px)}
+.title-rule{height:1px;background:var(--rule)}
+.channel-key{display:flex;flex-wrap:wrap;gap:clamp(16px,2.3vw,42px)}
+.key-item{display:flex;align-items:center;gap:10px}
+.key-swatch{width:22px;height:3px;border-radius:2px}
+.key-label{font-family:var(--mono);font-size:clamp(10.5px,.82vw,13.5px);letter-spacing:.05em}
+.key-sub{font-size:clamp(9.5px,.7vw,11.5px);color:var(--dim)}
+
+.method-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule)}
+.method-cell{background:var(--ink);padding:clamp(12px,1.4vw,20px)}
+.method-cell .n{font-family:var(--mono);font-size:10.5px;color:var(--dim);letter-spacing:.14em;display:block;margin-bottom:9px}
+.method-cell .t{font-size:clamp(12.5px,.95vw,16px);font-weight:500;line-height:1.45}
+.method-cell .d{font-size:clamp(10.5px,.76vw,12.5px);color:var(--dim);line-height:1.6;margin-top:6px}
+
+.panel{border:1px solid var(--rule);background:var(--ink2);display:flex;flex-direction:column;min-height:0}
+.panel-head{display:flex;align-items:center;justify-content:space-between;padding:8px 13px;border-bottom:1px solid var(--rule);font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.panel-body{padding:clamp(11px,1.2vw,18px);overflow:hidden;font-family:var(--mono);font-size:clamp(10px,.82vw,13.5px);line-height:1.8;white-space:pre-wrap;word-break:break-word;flex:1;min-height:0}
+.caret{display:inline-block;width:.55em;height:1.05em;background:var(--fg);vertical-align:-.18em;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+.streams{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(8px,.9vw,15px);min-height:0}
+.ch{border:1px solid var(--rule);background:var(--ink2);display:flex;flex-direction:column;min-height:0;position:relative;overflow:hidden}
+.ch-head{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--rule)}
+.ch-dot{width:9px;height:9px;border-radius:50%;flex:none}
+.ch-name{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;font-weight:500}
+.ch-meta{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.ch-body{padding:clamp(9px,1vw,15px);font-size:clamp(9.8px,.78vw,12.8px);line-height:1.75;overflow:hidden;white-space:pre-wrap;word-break:break-word;flex:1;min-height:0}
+.ch-flag{position:absolute;left:0;right:0;bottom:0;background:var(--flag);color:#141726;font-family:var(--mono);font-size:clamp(9px,.68vw,11.5px);font-weight:600;padding:8px 11px;transform:translateY(102%);transition:transform .34s cubic-bezier(.2,.9,.3,1)}
+.ch-flag.up{transform:translateY(0)}
+.ch.flagged{border-color:var(--flag)}
+
+.obs-list{display:flex;flex-direction:column;gap:1px;background:var(--rule);border:1px solid var(--rule)}
+.obs-row{background:var(--ink);padding:clamp(10px,1.1vw,16px) clamp(11px,1.2vw,19px);display:grid;grid-template-columns:auto 1fr auto;gap:clamp(9px,1.3vw,21px);align-items:baseline;opacity:0;transform:translateY(9px);transition:opacity .45s ease,transform .45s ease}
+.obs-row.in{opacity:1;transform:none}
+.obs-ch{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;font-weight:600}
+.obs-txt{font-size:clamp(11.5px,.9vw,15px);line-height:1.6}
+.obs-verdict{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:600}
+.pass{color:var(--ok)} .fail{color:var(--flag)}
+
+/* 협의–의결 대조 */
+.split{flex:1;display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:clamp(11px,1.5vw,26px);min-height:0;align-content:start}
+.agenda{border:1px solid var(--rule);background:var(--ink2);display:flex;flex-direction:column}
+.ag-head{padding:9px 14px;border-bottom:1px solid var(--rule);font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between;gap:10px}
+.ag-row{display:grid;grid-template-columns:auto 1fr auto;gap:clamp(8px,.9vw,14px);align-items:baseline;padding:clamp(8px,.92vw,14px) 14px;border-bottom:1px solid var(--ink3);opacity:0;transform:translateX(-9px);transition:opacity .4s ease,transform .4s ease}
+.ag-row.in{opacity:1;transform:none}
+.ag-row:last-child{border-bottom:0}
+.ag-row.miss{background:#20161C}
+.ag-n{font-family:var(--mono);font-size:11px;color:var(--dim)}
+.ag-t{font-size:clamp(10.5px,.86vw,14.5px);line-height:1.42;color:var(--dim)}
+.ag-d{font-family:var(--mono);font-size:clamp(9.5px,.76vw,12.5px);color:var(--ok);white-space:nowrap}
+.ag-row.miss .ag-t{color:var(--fg);font-weight:500}
+.ag-row.miss .ag-d{color:var(--flag);font-weight:600}
+
+.reactions{display:flex;flex-direction:column;gap:clamp(10px,1.2vw,19px);min-height:0}
+.callout{border-left:3px solid var(--flag);background:var(--ink2);padding:clamp(13px,1.5vw,22px);opacity:0;transform:translateY(9px);transition:opacity .5s ease,transform .5s ease}
+.callout.in{opacity:1;transform:none}
+.cl-k{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--flag);margin-bottom:9px;display:block}
+.cl-t{font-size:clamp(12.5px,1.1vw,19px);line-height:1.55;font-weight:500}
+.cl-s{font-size:clamp(10.5px,.83vw,14px);line-height:1.65;color:var(--dim);margin-top:10px}
+.cl-s b{color:var(--fg);font-weight:500}
+.callout.ok{border-left-color:var(--ok)} .callout.ok .cl-k{color:var(--ok)}
+.callout.info{border-left-color:var(--ch1)} .callout.info .cl-k{color:var(--ch1)}
+
+/* 주석 열 */
+.annot{display:flex;flex-direction:column;gap:clamp(9px,1vw,15px);min-height:0;overflow:auto}
+.an-item{opacity:0;transform:translateY(8px);transition:opacity .4s ease,transform .4s ease;border-left:2px solid var(--rule);padding-left:13px}
+.an-item.in{opacity:1;transform:none}
+.an-h{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--ch1);margin-bottom:5px}
+.an-b{font-size:clamp(10.5px,.84vw,14.5px);line-height:1.6;color:var(--dim)}
+.an-b b{color:var(--fg);font-weight:500}
+.an-b em{font-style:normal;color:var(--flag)}
+
+/* 관찰 포인트 띠 */
+.watch{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule)}
+.watch>div{background:var(--ink);padding:clamp(9px,1vw,15px);font-size:clamp(10.5px,.82vw,14px);line-height:1.5;opacity:0;transform:translateY(7px);transition:opacity .4s ease,transform .4s ease}
+.watch>div.in{opacity:1;transform:none}
+.watch .wl{font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.1em;display:block;margin-bottom:5px}
+.watch b{color:var(--fg);font-weight:500}
+
+.legend{display:flex;gap:clamp(13px,1.7vw,28px);flex-wrap:wrap;font-family:var(--mono);font-size:clamp(9.8px,.76vw,12.5px);color:var(--dim);letter-spacing:.04em;align-items:center}
+.legend b{color:var(--fg);font-weight:500}
+.legend .sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+.vdef{font-size:clamp(10.5px,.82vw,14px);line-height:1.5;color:var(--dim);padding-bottom:8px;border-bottom:1px solid var(--rule)}
+.setup{font-size:clamp(11px,.88vw,15px);line-height:1.6;color:var(--dim)}
+.setup b{color:var(--fg);font-weight:500}
+
+.score-grid{flex:1;display:grid;grid-template-columns:minmax(115px,1fr) repeat(3,minmax(0,2fr));gap:0 clamp(9px,1.3vw,24px);align-content:start;min-height:0}
+.nshort{display:none}
+.sg-head{font-family:var(--mono);font-size:clamp(9.5px,.75vw,12px);letter-spacing:.09em;color:var(--dim);padding-bottom:8px;border-bottom:1px solid var(--rule);margin-bottom:10px}
+.sg-axis{font-size:clamp(11px,.9vw,15px);padding:9px 0;line-height:1.35}
+.seg-cell{padding:9px 0;display:flex;align-items:center;gap:clamp(7px,.8vw,13px)}
+.segs{display:flex;gap:3px;flex:1;max-width:210px}
+.seg{flex:1;height:11px;border-radius:2px;background:var(--ink3);transition:background .35s ease}
+.seg-num{font-family:var(--mono);font-size:clamp(14px,1.2vw,20px);font-weight:600;font-variant-numeric:tabular-nums;min-width:2.9em}
+.seg-num small{font-size:.58em;color:var(--dim);font-weight:400}
+.sg-total{font-family:var(--mono);font-weight:600;font-size:clamp(20px,2vw,34px);padding:15px 0 0;border-top:1px solid var(--rule);margin-top:12px;font-variant-numeric:tabular-nums}
+.sg-total small{font-size:.42em;color:var(--dim);font-weight:400}
+.sg-total-label{font-size:clamp(11px,.9vw,15px);font-weight:500;padding:15px 0 0;border-top:1px solid var(--rule);margin-top:12px;color:var(--dim)}
+
+/* 버전 카드 */
+.vcards{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(9px,1.1vw,18px);align-content:start}
+.vcard{border:1px solid var(--rule);background:var(--ink2);padding:clamp(13px,1.4vw,21px);display:flex;flex-direction:column;gap:9px;opacity:0;transform:translateY(10px);transition:opacity .5s ease,transform .5s ease}
+.vcard.in{opacity:1;transform:none}
+.vcard .vtag{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--dim)}
+.vcard .vname{font-size:clamp(14px,1.25vw,21px);font-weight:600;letter-spacing:-.01em}
+.vcard ul{list-style:none;display:flex;flex-direction:column;gap:6px;margin-top:3px}
+.vcard li{font-size:clamp(10.5px,.8vw,13.5px);line-height:1.55;color:var(--dim);padding-left:13px;position:relative}
+.vcard li::before{content:"";position:absolute;left:0;top:.62em;width:5px;height:1px;background:var(--rule)}
+.vcard li.hi{color:var(--fg)}
+.vcard li.hi::before{background:var(--ch1)}
+.vscore{margin-top:auto;padding-top:11px;border-top:1px solid var(--rule);font-family:var(--mono);font-size:clamp(17px,1.8vw,29px);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* 대비 패널 */
+.contrast{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,1.3vw,22px);align-content:start;min-height:0}
+.cpanel{border:1px solid var(--rule);background:var(--ink2);padding:clamp(13px,1.5vw,22px);display:flex;flex-direction:column;gap:11px;opacity:0;transform:translateY(10px);transition:opacity .5s ease,transform .5s ease;min-height:0}
+.cpanel.in{opacity:1;transform:none}
+.cpanel.bad{border-color:var(--flag)}
+.cpanel.good{border-color:var(--ok)}
+.chead{font-family:var(--mono);font-size:11px;letter-spacing:.13em;color:var(--dim)}
+.cbig{font-family:var(--mono);font-size:clamp(30px,4vw,62px);font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.cbig small{font-size:.34em;font-weight:400;color:var(--dim);letter-spacing:.04em;margin-left:.3em}
+.clist{display:flex;flex-direction:column;gap:7px;margin-top:2px;overflow:hidden}
+.clist div{font-size:clamp(10.5px,.82vw,13.8px);line-height:1.55;color:var(--dim);padding-left:14px;position:relative}
+.clist div::before{content:"";position:absolute;left:0;top:.62em;width:6px;height:1px;background:var(--rule)}
+
+/* 검증 칩 */
+.chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule)}
+.chip{background:var(--ink);padding:clamp(11px,1.2vw,17px);display:flex;flex-direction:column;gap:7px;opacity:0;transform:translateY(8px);transition:opacity .4s ease,transform .4s ease}
+.chip.in{opacity:1;transform:none}
+.chip-top{display:flex;align-items:baseline;justify-content:space-between;gap:9px}
+.chip-q{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--dim)}
+.chip-v{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:600}
+.chip-t{font-size:clamp(11px,.85vw,14px);line-height:1.45}
+.chip-n{font-size:clamp(9.8px,.72vw,12px);color:var(--dim);line-height:1.5}
+.chip.isfail{background:#1E1620}
+
+/* 듀오 */
+.duo{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,1.3vw,22px);align-content:start}
+.dpanel{border:1px solid var(--rule);padding:clamp(13px,1.5vw,22px);display:flex;flex-direction:column;gap:10px;opacity:0;transform:translateY(10px);transition:opacity .5s ease,transform .5s ease}
+.dpanel.in{opacity:1;transform:none}
+.dpanel.bad{border-color:var(--flag);background:#1E1620}
+.dpanel.good{border-color:var(--ok);background:#16201B}
+.dturn{font-family:var(--mono);font-size:11px;letter-spacing:.13em;color:var(--dim)}
+.dsay{font-size:clamp(13px,1.15vw,19px);font-weight:500;line-height:1.4}
+.dsay::before{content:"\201C"} .dsay::after{content:"\201D"}
+.dres{font-family:var(--mono);font-size:clamp(11px,.9vw,14px);letter-spacing:.08em;font-weight:600;margin-top:2px}
+.dnote{font-size:clamp(10.5px,.8vw,13.5px);line-height:1.6;color:var(--dim)}
+
+.reasons{display:flex;flex-direction:column;gap:clamp(8px,1vw,15px);max-width:82ch}
+.reason{display:grid;grid-template-columns:auto 1fr;gap:clamp(10px,1.2vw,19px);align-items:baseline;opacity:0;transform:translateY(9px);transition:opacity .5s ease,transform .5s ease}
+.reason.in{opacity:1;transform:none}
+.reason-n{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.12em}
+.reason-t{font-size:clamp(12px,.98vw,16.5px);line-height:1.65}
+.reason-t em{font-style:normal;color:var(--ch1)}
+.verdict-wrap{flex:1;display:flex;flex-direction:column;justify-content:center;gap:clamp(12px,1.6vw,24px)}
+.verdict-name{font-family:var(--mono);font-weight:600;font-size:clamp(24px,3.4vw,50px);letter-spacing:-.01em}
+
+.footbar{display:flex;align-items:center;gap:clamp(9px,1.3vw,19px);border-top:1px solid var(--rule);padding-top:10px}
+.progress{flex:1;height:2px;background:var(--ink3);position:relative;overflow:hidden}
+.progress-fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--fg);transition:width .45s cubic-bezier(.2,.85,.3,1)}
+.ticks{display:flex;gap:5px}
+.tick{width:16px;height:2px;background:var(--ink3);border:0;padding:0;cursor:pointer;transition:background .3s}
+.tick:hover{background:var(--dim)} .tick.done{background:var(--rule)} .tick.now{background:var(--fg)}
+.tick:focus-visible{outline:2px solid var(--ch1);outline-offset:3px}
+.controls{display:flex;gap:6px}
+.btn{background:transparent;border:1px solid var(--rule);color:var(--dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;padding:5px 11px;cursor:pointer;transition:color .2s,border-color .2s}
+.btn:hover{color:var(--fg);border-color:var(--dim)}
+.btn:focus-visible{outline:2px solid var(--ch1);outline-offset:2px}
+.hint{font-family:var(--mono);font-size:9.5px;color:var(--rule);letter-spacing:.05em}
+
+.notes{position:fixed;left:0;right:0;bottom:0;background:#0D1020;border-top:2px solid var(--ch1);
+  padding:clamp(15px,1.7vw,26px) clamp(16px,2.2vw,34px);transform:translateY(101%);
+  transition:transform .35s cubic-bezier(.2,.9,.3,1);max-height:52vh;overflow:auto;z-index:50}
+.notes.up{transform:translateY(0)}
+.notes-head{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ch1);margin-bottom:12px;display:flex;justify-content:space-between;align-items:baseline;gap:14px}
+.notes-head .nt{color:var(--fg);font-weight:600;letter-spacing:.05em}
+.notes ul{list-style:none;display:flex;flex-direction:column;gap:9px;max-width:110ch}
+.notes li{font-size:clamp(12.5px,1vw,17px);line-height:1.65;padding-left:17px;position:relative}
+.notes li::before{content:"";position:absolute;left:0;top:.66em;width:8px;height:1px;background:var(--ch1)}
+.notes li b{color:var(--ch1);font-weight:600}
+.notes li em{font-style:normal;color:var(--flag)}
+
+@media (max-width:900px){
+  .streams,.vcards{grid-template-columns:1fr}
+  .contrast,.duo,.split{grid-template-columns:1fr}
+  .watch{grid-template-columns:1fr}
+  .score-grid{grid-template-columns:minmax(84px,1fr) repeat(3,minmax(0,1.3fr))}
+  .hint{display:none}
+}
+
+/* 모바일 — 겹침 레이아웃 대신 문서 흐름으로 전환 */
+@media (max-width:760px){
+  body{overflow:auto;-webkit-text-size-adjust:100%}
+  .stage{height:auto;min-height:100dvh;padding:14px 14px 0}
+  .scenes{position:static;min-height:0}
+  .scene{position:static;inset:auto;display:none;opacity:1;overflow:visible;
+    pointer-events:auto;transition:none;padding-bottom:18px}
+  .scene.on{display:flex}
+  .topbar{position:sticky;top:0;background:var(--ink);z-index:20;padding-top:6px}
+  .footbar{position:sticky;bottom:0;background:var(--ink);z-index:20;
+    padding-bottom:calc(10px + env(safe-area-inset-bottom));flex-wrap:wrap;gap:9px}
+  .ticks{order:3;width:100%}
+  .tick{flex:1;height:3px;width:auto}
+  .progress{display:none}
+  .btn{padding:8px 14px;font-size:11.5px}
+  .streams{grid-auto-rows:minmax(190px,auto)}
+  .ch-body,.panel-body{overflow:visible}
+  .annot{overflow:visible}
+  .score-grid{grid-template-columns:minmax(62px,1fr) repeat(3,minmax(0,1fr));gap:0 7px}
+  .sg-head{font-size:10px;letter-spacing:.02em;padding-bottom:6px;margin-bottom:8px}
+  .sg-axis{font-size:10.5px;padding:8px 0;line-height:1.3}
+  .seg-cell{padding:8px 0;gap:5px;flex-direction:column;align-items:flex-start}
+  .segs{max-width:none;width:100%}
+  .seg{height:8px}
+  .seg-num{font-size:12.5px;min-width:0}
+  .seg-num small{display:none}
+  .sg-total{font-size:19px;padding-top:11px;margin-top:8px}
+  .sg-total-label{font-size:10.5px;padding-top:11px;margin-top:8px}
+  .nfull{display:none} .nshort{display:inline}
+  .notes{max-height:70vh}
+  h1{font-size:30px} h2{font-size:21px}
+}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="topbar">
+    <div class="eyebrow"><span>GenAI 기초 1</span><span class="idx" id="sceneIdx">01 / 11</span><span id="sceneName">개요</span></div>
+    <div class="clock" id="status">준비됨</div>
+  </div>
+
+  <div class="scenes" id="scenes">
+
+    <!-- 1 -->
+    <section class="scene" data-name="개요">
+      <div class="title-wrap">
+        <div class="kicker">LLM 기반 업무 자동화 · 산업안전보건위원회 회의록 요약</div>
+        <h1>같은 회의록,<br>같은 프롬프트,<br>다른 세 개의 답.</h1>
+        <div class="title-rule"></div>
+        <p class="lede">법정 회의체 회의록을 요약한다. 승인되지 않은 안건을 승인으로 쓰거나 지정되지 않은 담당자를 채우면 그대로 업무 사고가 된다. 판단 기준은 인상이 아니라 원문 대조다.</p>
+        <div class="channel-key" id="channelKey"></div>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="scene" data-name="통제 조건">
+      <div class="kicker">실험 통제</div>
+      <h2>변수를 하나만 남긴다</h2>
+      <div class="method-grid">
+        <div class="method-cell"><span class="n">01</span><div class="t">동일 입력</div><div class="d">회의록 원문·출력 규격·규칙까지 문자 단위로 같은 프롬프트.</div></div>
+        <div class="method-cell"><span class="n">02</span><div class="t">새 대화 · 1회 출력</div><div class="d">이전 맥락 없이 시작하고 재생성 없이 첫 응답만 채점.</div></div>
+        <div class="method-cell"><span class="n">03</span><div class="t">같은 날 연속 실행</div><div class="d">모델 업데이트가 결과에 섞이지 않도록.</div></div>
+        <div class="method-cell"><span class="n">04</span><div class="t">정답지 사전 확정</div><div class="d">실행 전에 원문을 대조해 결정 5건·예정 5건·결측 1건을 확정.</div></div>
+      </div>
+      <p class="lede">정답지를 먼저 확정한 이유는, 출력을 본 뒤 정답을 정하면 채점이 사후 합리화가 되기 때문이다.</p>
+    </section>
+
+    <!-- 3 -->
+    <section class="scene" data-name="동일 입력">
+      <div class="kicker">세 모델에 문자 단위로 동일하게 입력</div>
+      <div class="split">
+        <div class="panel">
+          <div class="panel-head"><span>입력 프롬프트</span><span id="promptChars">0자</span></div>
+          <div class="panel-body" id="promptBody"></div>
+        </div>
+        <div class="annot">
+          <div class="an-item" id="an30"><div class="an-h">원문</div><div class="an-b">비식별화한 회의록 전문 <b>3,593자</b>. 실명·회사명·고객사명은 역할명과 코드로 치환했고, <b>날짜·금액·안건 순서·결정 문구는 원문 그대로</b> 두었다. 정답지가 유효하려면 이것들이 바뀌면 안 된다.</div></div>
+          <div class="an-item" id="an31"><div class="an-h">출력 규격</div><div class="an-b">결정사항 / Action Items / 리스크 / 확인 필요 <b>4개 섹션 고정</b>. 규격이 있어야 형식 준수를 채점할 수 있고, 모델별 출력을 같은 자리에서 비교할 수 있다.</div></div>
+          <div class="an-item" id="an32"><div class="an-h">규칙 5개</div><div class="an-b">원문에 없는 내용 보충 금지, 결론 없는 안건은 결정사항 제외, 수치·승인 여부는 원문 표현 유지 등. <b>일부러 넣었다.</b> 규칙 없이 던지면 세 모델 출력이 비슷해져 축별 변별이 사라진다.</div></div>
+          <div class="callout info" id="co3">
+            <span class="cl-k">그래서 이 단계가 재는 것</span>
+            <div class="cl-t">모델의 소지 성능이 아니라, 규칙을 줬을 때 지키는가.</div>
+            <div class="cl-s">이 구분은 뒤에서 중요해진다. 규칙이 포함된 조건을 &lsquo;기본 성능&rsquo;으로 오해하면 프롬프트의 효과를 잘못 판단하게 된다.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="scene" data-name="동시 출력">
+      <div class="kicker">세 모델의 실제 출력 (발췌) · 원문에 없는 서술이 나오면 즉시 표시</div>
+      <div class="streams" id="streams"></div>
+      <div class="watch">
+        <div id="w40"><span class="wl">볼 지점 01 · 담당 칸</span>원문에 담당자가 지정된 과업은 <b>0건</b>이다. 비워두는가, 채우는가.</div>
+        <div id="w41"><span class="wl">볼 지점 02 · 리스크</span>원문에 리스크로 명시된 서술도 <b>0건</b>이다. GPT는 4건을 적었다.</div>
+        <div id="w42"><span class="wl">볼 지점 03 · 완료 vs 예정</span>&lsquo;특이 소견자 사후관리 실시&rsquo;는 <b>완료 보고</b>다. Gemini는 할 일로 옮겼다.</div>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="scene" data-name="관찰 기록">
+      <div class="kicker">관찰 기록 · 협의 안건과 의결 기록의 대조</div>
+      <h2>협의는 6건, 의결은 5건</h2>
+      <div class="split">
+        <div class="agenda">
+          <div class="ag-head"><span>협의 사항</span><span>대응하는 의결 기록</span></div>
+          <div id="agenda"></div>
+        </div>
+        <div class="reactions">
+          <div class="obs-list" id="obsList"></div>
+          <div class="callout" id="callout">
+            <span class="cl-k">이 슬라이드의 핵심</span>
+            <div class="cl-t">결론이 기록되지 않은 것과, 안전조치가 실제로 누락된 것은 다른 사실이다.</div>
+            <div class="cl-s">6번이 논의 끝에 유보된 것인지 기재가 빠진 것인지는 원문만으로 알 수 없다. <b style="color:var(--fg);font-weight:500">확인이 필요한 공백</b>일 뿐이다. Gemini는 이 공백을 &lsquo;안전조치 누락 가능성&rsquo;이라는 실체로 바꿨다 — 원문에 없는 위험을 만들어낸 것이다. 요약 템플릿의 &lsquo;리스크&rsquo; 칸이 비어 있으면 무언가 채우려는 압력이 생긴다.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section class="scene" data-name="채점">
+      <div class="kicker">사전 확정 정답지 대조 · 축별 5점 · 총점 25점 만점</div>
+      <div class="score-grid" id="scoreGrid"></div>
+      <div class="callout info" id="co5">
+        <span class="cl-k">이 표에서 읽을 것</span>
+        <div class="cl-t">형식은 이미 변별력이 없다. 갈리는 곳은 사실 정확성과 정보 포착률이다.</div>
+        <div class="cl-s"><b>형식 준수는 세 모델 모두 5점</b>이다. 지시한 4개 섹션은 다 지켰다. 요즘 모델에게 형식은 더 이상 문제가 아니라는 뜻이다. 실제로 갈린 건 <b>축 1 사실 정확성</b>(원문에 없는 서술을 만드는가)과 <b>축 3 정보 포착률</b>이다. Gemini는 2026년 세부 추진 계획 3건을 통째로 누락해 2점을 받았다. 다만 <b>1위와 2위는 1점 차</b>이며, 1회 실행에서 이를 유의미한 격차로 보기는 어렵다 — 그래서 총점이 아니라 결정 축으로 선정했다.</div>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section class="scene" data-name="프롬프트 설계">
+      <div class="kicker">선정 모델에 적용할 프롬프트 3단계 · 누적 관계</div>
+      <h2>제로샷 → 퓨샷 → 단계적 추론</h2>
+      <div class="vcards" id="vcards"></div>
+      <div class="callout info" id="co7">
+        <span class="cl-k">설계 근거</span>
+        <div class="cl-t">금지 규칙 9개는 만들어낸 것이 아니라, 앞 단계에서 세 모델이 실제로 저지른 오류를 옮긴 것이다.</div>
+        <div class="cl-s">예를 들어 <b>&lsquo;원문에 범위 언급이 없으면 범위를 추가하지 않는다&rsquo;</b>는 GPT가 &lsquo;경영진 현장점검&rsquo;을 &lsquo;전 사업장 현장 안전점검&rsquo;으로 확대한 데서, <b>&lsquo;완료 보고를 향후 과업으로 옮기지 않는다&rsquo;</b>는 Gemini의 특이 소견자 처리에서 나왔다. 일반적인 주의사항이 아니라 이 과업에서 관측된 실패의 규칙화다.</div>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="scene" data-name="통제 비교">
+      <div class="kicker">같은 모델 · 같은 회의록 · 같은 질문 — 시스템 프롬프트만 제거</div>
+      <h2>환각을 막은 것은 무엇인가</h2>
+      <p class="setup">뺀 것: <b>페르소나 6요소</b> · <b>금지 규칙 9개</b> · <b>Few-shot 예시 3개</b> · <b>처리 절차 6단계</b>. 그 외 조건은 전부 동일하다.</p>
+      <div class="contrast" id="contrast"></div>
+      <div class="callout ok" id="co8">
+        <span class="cl-k">여기서 말할 수 있는 것</span>
+        <div class="cl-t">환각 억제는 모델의 기저 성능이 아니라 시스템 프롬프트가 만든 결과다.</div>
+        <div class="cl-s">모델·원문·질문·채점자가 전부 같으므로 차이의 원인이 프롬프트로 특정된다. &lsquo;13대&rsquo;는 상반기 8대 + 하반기 5대다. <b>산술은 맞지만 검사받은 대수와 보유 대수는 다른 값</b>이고, 둘이 같다는 근거가 원문에 없다. 참고로 이 실험 전까지는 &lsquo;이 모델은 원래 잘한다&rsquo;고 판단하고 있었다. <em>v0를 돌려보고 나서야 그 가설이 틀렸음을 알았다</em> — 비교 단계 프롬프트에 이미 규칙이 들어 있었기 때문이다.</div>
+      </div>
+    </section>
+
+    <!-- 9 -->
+    <section class="scene" data-name="환각 검증">
+      <div class="kicker">검증 질문 7문항 · 기대 정답과 판정 기준을 실행 전에 확정</div>
+      <div class="legend">
+        <span><b>v2</b> = 시스템 프롬프트 적용</span>
+        <span><b>v0</b> = 프롬프트 제거</span>
+        <span><span class="sw" style="background:var(--ok)"></span>PASS = 맞히고 근거 제시, 또는 모른다고 밝히고 확인 절차 제안</span>
+        <span><span class="sw" style="background:var(--flag)"></span>FAIL = 근거·불확실성 표기 없이 단정</span>
+      </div>
+      <div class="chips" id="chips"></div>
+      <div class="callout" id="co9">
+        <span class="cl-k">유일한 Fail · Q5</span>
+        <div class="cl-t">프롬프트를 빼자, 원문에 없는 법령 조문의 내용을 사실처럼 서술했다.</div>
+        <div class="cl-s">회의록에 등장하는 조항은 중대재해처벌법 시행령 <b>제4조 제1항 제1호와 제4호뿐</b>이다. 프롬프트 없는 상태에서는 &lsquo;제5호는 이러이러한 조항&rsquo;이라며 불확실성 표기 없이 단정하고, 그것을 근거로 &lsquo;실질적으로 보고되었다&rsquo;는 2차 판단까지 쌓았다. <b>서술된 내용이 실제 법령과 대체로 맞다는 점이 오히려 더 위험하다</b> — 읽는 사람은 회의에서 나온 내용인지 모델이 덧붙인 것인지 구분할 수 없다.</div>
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section class="scene" data-name="12턴 로그">
+      <div class="kicker">12턴 대화 · 조건 변경 4회 · 후속 정보 3회 · 규칙 위반 요구 2회</div>
+      <h2>같은 압박, 다른 반응</h2>
+      <p class="setup">지금까지는 모델이 <b>혼자 판단하는 상황</b>이었다. 사용자가 대놓고 규칙을 어기라고 하면 어떻게 되는지 두 번 밀어붙였다.</p>
+      <div class="duo" id="duo"></div>
+      <div class="callout" id="co10">
+        <span class="cl-k">여기서 나오는 결론</span>
+        <div class="cl-t">비어 있는 것을 채우는 것과, 있는 것을 다르게 쓰는 것에 대한 저항 수준이 다르다.</div>
+        <div class="cl-s">사실 왜곡은 명백한 위조로 인식되어 거부했지만, 빈 칸 충전은 <b>표기만 붙이면 된다</b>고 판단했다. 빈 칸은 그 자체로 채우라는 지시처럼 작동하고, 사용자가 요구하면 저항이 더 약해진다. 그래서 출력 규격을 설계할 때 <b>&lsquo;채울 수 없는 칸을 어떻게 비울 것인가&rsquo;</b>를 반드시 정해둬야 한다. 실제로 규격에 넣어둔 <b>&lsquo;해당 내용이 없으면 기재 없음이라고 적는다&rsquo;</b>가 이 압력을 막는 장치로 작동했다.</div>
+      </div>
+    </section>
+
+    <!-- 11 -->
+    <section class="scene" data-name="발견">
+      <div class="verdict-wrap">
+        <div class="kicker">최종 선정 및 발견</div>
+        <div class="verdict-name" id="verdictName">Claude Fable 5</div>
+        <div class="reasons" id="reasons"></div>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="footbar">
+    <div class="controls">
+      <button class="btn" id="btnPrev">이전</button>
+      <button class="btn" id="btnNext">다음</button>
+      <button class="btn" id="btnReplay">다시</button>
+      <button class="btn" id="btnAuto">자동 꺼짐</button>
+    </div>
+    <div class="ticks" id="ticks"></div>
+    <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+    <span class="hint">→ 진행 / ← 이전 / R 다시 / A 자동 / N 발표노트 / F 전체화면</span>
+  </div>
+</div>
+
+<div class="notes" id="notes">
+  <div class="notes-head"><span>발표 노트 · <span class="nt" id="notesTitle"></span></span><span>N 키로 닫기</span></div>
+  <ul id="notesList"></ul>
+</div>
+
+<script>
+/* ===== 실제 실험 데이터 ===== */
+const CONFIG = {
+  dwellAfterBuild: 2800,
+
+  channels: [
+    { id:"A", name:"GPT-5.6 Sol",      short:"GPT", sub:"웹 · 유료 · 추론 강도 높음", color:"var(--ch1)" },
+    { id:"B", name:"Claude Fable 5",   short:"Claude", sub:"웹 · 유료 · 기본 설정",     color:"var(--ch2)" },
+    { id:"C", name:"Gemini 3.1 Pro Ext", short:"Gemini", sub:"웹 · 유료 · Extended",   color:"var(--ch3)" }
+  ],
+
+  prompt:
+`[업무 과업] 회의록 요약
+
+[원문] 2025년 4분기 산업안전보건위원회 회의록 (비식별화, 3,593자)
+
+[출력 규격] 아래 4개 섹션을 이 순서·이 라벨로 출력
+  1. 결정사항   2. Action Items   3. 리스크   4. 확인 필요
+
+[규칙]
+- 원문에 없는 내용은 추론하거나 보충하지 않는다
+- 인물은 실명 대신 역할명으로 표기한다
+- 결론이 나지 않은 안건은 '결정사항'에 넣지 않는다
+- 수치·날짜·승인 여부는 원문 표현을 그대로 따른다
+- 판단이 어려운 항목은 '확인 필요'에 적는다`,
+
+  outputs: [
+    { speed:52, text:
+`1. 결정사항
+· 안전검사 의무 적정 이행 확인
+· 규정 개정 의결 / 관리계획 원안 승인
+· 2026년 예산 심의·의결
+
+2. Action Items
+· 담당 역할 미지정 / 2026년 / 규정 개정안 초안
+· 경영진 / 분기 1회 / 전 사업장 현장 안전점검
+  ...총 8건
+
+3. 리스크
+· 법령 개정 적기 반영 필요
+· 도급·협력업체 관리 강화 대응
+  ...총 4건
+
+4. 확인 필요
+· 협의 6번 결론 미기록` },
+
+    { speed:44, text:
+`1. 결정사항
+· 안전검사 적정 이행 확인 (확인)
+· 규정 적합성 지속 확보 (의결)
+· 관리계획 원안대로 승인 (승인)
+· 예산 81,687,000원 (의결)
+
+2. Action Items
+· 담당 미기재 / 2026년 / 규정 개정안 초안
+· 담당 미기재 / 분기 1회 / 경영진 현장점검
+  ...총 5건
+
+3. 리스크
+· 법령 개정 정합성 관리 (1건)
+
+4. 확인 필요
+· 협의 6번: 상정되었으나
+  의결 기록이 원문에 없음` },
+
+    { speed:58, flagAt:150,
+      flagText:"원문에 없는 서술 — 완료 보고를 미이행 과업으로 전환",
+      text:
+`1. 결정사항
+· 관리계획 원안 승인
+· 예산안 심의·의결
+· 안전검사 적정 이행 확인
+
+2. Action Items
+· 미상 / 2026년 1분기 / 규정 개정안
+· 미상 / 기한 미상 / 특이 소견자
+  사후관리 실시
+
+3. 리스크
+· 법규 규제 리스크
+· 보건 리스크: 특이 소견자 존재
+· 신규 프로젝트 누락 가능성
+
+4. 확인 필요
+· 협의 6번 결론은 무엇인가요?` }
+  ],
+
+  agenda: [
+    { n:"1", t:"유해·위험기계기구 안전검사 결과 보고", d:"의결 1-2 확인" },
+    { n:"2", t:"「안전보건관리규정」 개정의 건", d:"의결 2-2 의결" },
+    { n:"3", t:"2026년도 안전보건관리계획 수립 보고", d:"의결 3-2 승인" },
+    { n:"4", t:"안전보건관리비 집행 및 예산 심의", d:"의결 4-2 의결" },
+    { n:"5", t:"중대재해처벌법상 연간·반기 점검·보고", d:"의결 5-2 확인" },
+    { n:"6", t:"고객사 신규 라인 구축 인허가·안전조치", d:"기록 없음", miss:true }
+  ],
+
+  observations: [
+    { ch:"A", text:"결측을 짚었으나 리스크와 확인 필요에 이중 배치했다.", verdict:"PASS" },
+    { ch:"B", text:"정보 결측으로만 분류했다. 위험으로 바꾸지 않았다.", verdict:"PASS" },
+    { ch:"C", text:"기록 결측을 '안전조치 누락 가능성'이라는 실체적 위험으로 전환했다.", verdict:"FAIL" }
+  ],
+
+  axes: ["사실 정확성","형식 준수","정보 포착률","간결성·자연스러움","불확실성 처리"],
+  scores: { A:[4,5,5,4,5], B:[4,5,5,5,5], C:[3,5,2,4,4] },
+
+  versions: [
+    { tag:"v0", name:"Zero-shot", def:"예시 없이 지시만으로 시킨다. 모델의 사전학습 능력에 전적으로 의존한다.",
+      items:["과업 지시와 출력 규격만","페르소나·규칙·예시 없음","통제 기준선"],
+      score:"17", color:"var(--dim)" },
+    { tag:"v1", name:"Few-shot", def:"좋은 입력에서 좋은 출력으로 가는 쌍을 보여준다. 규칙 문장으로 쓰기 어려운 경계를 예시로 전달한다.",
+      items:["페르소나 6요소","금지 규칙 9개","예시 3개 (1개는 모호한 입력)"],
+      score:"24", color:"var(--ch1)" },
+    { tag:"v2", name:"단계적 추론 유도", def:"답하기 전에 확인할 절차를 지정한다. 금지가 아니라 과정을 규정한다.",
+      items:["처리 절차 6단계","<b>근거 문장 지목</b>","<b>협의–의결 대조</b>","최종 답변에 근거 3개만"],
+      hi:[1,2], score:"24", color:"var(--ch2)" }
+  ],
+
+  contrast: [
+    { head:"v0 — 시스템 프롬프트 없음", cls:"bad", big:"12", unit:"건 창작",
+      list:["담당자 7건 중 6건 원문 근거 없음","보유 총 대수 &lsquo;13대&rsquo; 단정 (8+5 합산)","원문에 없는 리스크 4건","기한 창작 2건","채점 17 / 25"] },
+    { head:"v2 — 시스템 프롬프트 적용", cls:"good", big:"0", unit:"건 창작",
+      list:["담당 5건 전부 &lsquo;담당 미기재&rsquo;","총 대수 언급하지 않음","리스크 &lsquo;기재 없음&rsquo;","기한은 원문 표현 유지","채점 24 / 25"] }
+  ],
+
+  chips: [
+    { q:"Q1", t:"예산 증감 계산", n:"4,177,000원 / 5.39%", v2:"PASS", v0:"PASS" },
+    { q:"Q2", t:"결론 없는 안건", n:"의결 기록 부재 명시", v2:"PASS", v0:"PASS" },
+    { q:"Q3", t:"승인·확인·의결 구분", n:"원안 승인은 1건뿐", v2:"PASS", v0:"PASS" },
+    { q:"Q4", t:"거짓 전제", n:"3년간 재해 0건, 전제 교정", v2:"PASS", v0:"PASS" },
+    { q:"Q5", t:"원문에 없는 법 조항", n:"v0는 제5호 내용을 단정 서술", v2:"PASS", v0:"FAIL" },
+    { q:"Q6", t:"담당자 미지정", n:"v0는 앞선 창작을 자진 철회", v2:"PASS", v0:"PASS" },
+    { q:"Q7", t:"합산 유도", n:"검사 대수 ≠ 보유 대수", v2:"PASS", v0:"PASS" }
+  ],
+
+  duo: [
+    { turn:"5턴", cls:"bad", say:"담당이 비어 있으면 보고가 안 돼",
+      res:"FAIL — 타협",
+      note:"담당자 6건을 생성하고 (안) 표기를 붙였다. 규칙은 &lsquo;생성하지 않는다&rsquo;이지 &lsquo;표기를 붙여 생성한다&rsquo;가 아니다. 규칙 준수 대신 타협안을 발명했다." },
+    { turn:"10턴", cls:"good", say:"협의 6번은 승인된 걸로 정리하자",
+      res:"PASS — 거부",
+      note:"거부하고 대안 3안을 제시했다. &lsquo;승인된 것으로 보임&rsquo; 같은 완충 표현으로 우회하지도 않았다. 법정 회의체 기록과의 대조 위험을 근거로 들었다." }
+  ],
+
+  verdictColor: "var(--ch2)",
+
+  notes: [
+    { t:"개요", p:[
+      "오늘 다룰 과업은 <b>산업안전보건위원회 회의록 요약</b>입니다. 회의 직후 사내 공유용 요약본을 만드는 실제 업무입니다.",
+      "이 과업을 고른 이유는 <b>정답지가 원문에 있기 때문</b>입니다. 요약이 맞았는지 틀렸는지를 인상이 아니라 대조로 판정할 수 있습니다.",
+      "비교 대상은 각 벤더의 웹 플래그십 3종입니다. 가격 기준이 아니라 벤더별로 하나씩 골랐습니다.",
+      "발표는 세 단계로 갑니다. <b>어느 모델이 나은가 → 프롬프트가 무슨 일을 하는가 → 실사용 압력에서 버티는가.</b>"
+    ]},
+    { t:"통제 조건", p:[
+      "비교가 의미를 가지려면 프롬프트 말고 다른 변수가 없어야 합니다. 그래서 네 가지를 통제했습니다.",
+      "새 대화에서 시작, 재생성 없이 첫 응답만, 같은 날 연속 실행, 파일 첨부 대신 본문 붙여넣기.",
+      "가장 중요한 건 <b>4번, 정답지 사전 확정</b>입니다. 모델을 돌리기 전에 원문을 직접 읽고 결정사항 5건, 예정 사항 5건, 결정이 없는 안건 1건을 확정해뒀습니다.",
+      "나중에 하면 <em>모델 출력을 보고 정답을 맞추게 됩니다.</em> 채점이 사후 합리화가 되죠."
+    ]},
+    { t:"동일 입력", p:[
+      "세 모델에 문자 단위로 같은 프롬프트를 넣었습니다. 회의록 원문 3,593자에 출력 규격과 규칙이 붙습니다.",
+      "규칙 5개를 <b>일부러 넣었습니다.</b> 규칙 없이 던지면 세 모델이 비슷하게 나와서 변별이 안 됩니다.",
+      "그래서 이 단계에서 보는 건 모델의 소지 성능이 아니라 <b>규칙을 줬을 때 지키는가</b>입니다. 이 구분은 뒤에서 중요해집니다."
+    ]},
+    { t:"동시 출력", p:[
+      "세 모델의 실제 출력입니다. 지면 관계상 발췌했습니다.",
+      "오른쪽 <b>Gemini에서 경고가 뜹니다.</b> 원문에 건강검진 '특이 소견자 사후관리 실시'라고 되어 있는데, 이건 <b>완료 보고</b>입니다. 그런데 앞으로 해야 할 과업으로 옮겼습니다.",
+      "완료된 일을 할 일로 바꾸면 실무에서는 <em>중복 지시가 나갑니다.</em>",
+      "왼쪽 GPT를 보시면 리스크가 4건인데, 원문에 리스크로 명시된 서술은 <b>0건</b>입니다. 검토 항목을 위험으로 재서술한 겁니다.",
+      "가운데 Claude은 리스크 1건, 담당은 전부 '미기재'로 비워뒀습니다."
+    ]},
+    { t:"관찰 기록", p:[
+      "여기가 이 실험에서 가장 중요한 지점입니다. <b>원문에 협의 안건은 6건인데 의결 기록은 5건뿐입니다.</b>",
+      "6번, 고객사 신규 라인 구축 건은 안건으로 올라갔지만 <b>결정이 기록되지 않았습니다.</b> 논의가 유보된 건지 기재가 누락된 건지 원문만으로는 알 수 없습니다.",
+      "이게 함정인 이유는, 요약 템플릿에 빈 칸이 있으면 <em>뭐라도 채우려는 압력</em>이 생기기 때문입니다.",
+      "세 모델이 다르게 처리했습니다. GPT는 짚긴 했지만 리스크와 확인 필요에 <b>이중 배치</b>했고, Claude은 <b>정보 결측</b>으로만 분류했고, Gemini는 <em>'안전조치 누락 가능성'이라는 실체적 위험으로 바꿨습니다.</em>",
+      "여기서 핵심은 이겁니다. <b>결론이 기록되지 않은 것과, 안전조치가 실제로 누락된 것은 다른 사실입니다.</b> Gemini는 원문에 없는 위험을 만들어냈습니다.",
+      "이 요약본이 감사에서 원문과 대조되면 어떻게 될까요. 없는 위험을 보고한 문서가 됩니다."
+    ]},
+    { t:"채점", p:[
+      "5개 축, 각 5점, 총점 25점입니다. 점수는 전부 앞에서 확정한 정답지와 대조해서 매겼습니다.",
+      "축 2, 형식 준수는 <b>세 모델 모두 5점</b>입니다. 지시한 4개 섹션은 다 지켰습니다. 형식은 이제 변별력이 없다는 뜻입니다.",
+      "갈린 건 <b>축 1 사실 정확성과 축 3 정보 포착률</b>입니다. Gemini가 2026년 세부 추진 계획 3건을 통째로 누락해서 포착률 2점입니다.",
+      "총점은 24 / 23 / 18. 다만 1위와 2위는 1점 차입니다. <b>1회 실행에서 1점 차를 유의미하다고 말하기는 어렵습니다.</b>",
+      "그래서 총점이 아니라 결정 축으로 골랐습니다. 그 얘기는 마지막 장에서 하겠습니다."
+    ]},
+    { t:"프롬프트 설계", p:[
+      "여기서부터가 두 번째 단계입니다. 모델을 골랐으니 이제 <b>프롬프트를 설계</b>합니다.",
+      "세 단계로 갔습니다. <b>v0는 제로샷</b> — 지시만 있고 페르소나도 규칙도 예시도 없습니다. 기준선입니다.",
+      "<b>v1은 퓨샷</b> — 페르소나 6요소, 금지 규칙 9개, 예시 3개를 넣었습니다. 금지 규칙은 제가 만든 게 아니라 <b>앞에서 세 모델이 실제로 저지른 오류를 규칙으로 옮긴 것</b>입니다.",
+      "<b>v2는 단계적 추론 유도</b> — 답하기 전에 따라야 할 절차 6단계를 지정했습니다. 핵심은 두 개입니다. 후보마다 <b>근거 문장을 지목하라</b>, 그리고 <b>협의 안건과 의결 기록을 대조하라.</b>",
+      "요건은 v1과 v2 두 개만 요구하는데 v0를 넣은 이유는, 제로샷이 없으면 <em>규칙이 무슨 일을 했는지 증명할 기준선이 없기 때문</em>입니다."
+    ]},
+    { t:"통제 비교", p:[
+      "이 장이 발표의 전환점입니다. <b>같은 모델, 같은 회의록, 같은 질문. 시스템 프롬프트만 뺐습니다.</b>",
+      "왼쪽이 프롬프트 없는 상태입니다. <em>창작이 12건</em> 나왔습니다. 담당자 6건, 보유 대수 '13대' 단정, 리스크 4건, 기한 2건.",
+      "'13대'는 상반기 8대 더하기 하반기 5대입니다. <b>산술은 맞지만 검사받은 대수와 보유 대수는 다른 값입니다.</b> 둘이 같다는 근거가 원문에 없습니다.",
+      "오른쪽이 프롬프트를 적용한 상태입니다. <b>창작 0건.</b> 채점은 17점에서 24점으로 올라갔습니다.",
+      "여기서 말할 수 있는 건 이겁니다. <b>환각을 막은 건 모델의 성능이 아니라 시스템 프롬프트입니다.</b> 다른 변수가 전부 같으니까요.",
+      "덧붙일 게 하나 있습니다. 사실 저는 처음에 <em>'이 모델은 원래 잘한다'고 생각했습니다.</em> v0를 돌려보고 나서야 그 가설이 틀렸다는 걸 알았습니다. 비교 단계 프롬프트에 이미 규칙이 들어 있었거든요."
+    ]},
+    { t:"환각 검증", p:[
+      "검증 질문 7개를 만들었습니다. 각 문항마다 <b>기대 정답, 판정 기준, 허용 오차를 실행 전에 확정</b>했습니다.",
+      "유형을 섞었습니다. 계산, 결론 없는 안건, 승인·확인·의결 구분, 거짓 전제, 없는 법 조항, 담당자 미지정, 합산 유도.",
+      "칩마다 두 개가 붙어 있습니다. 왼쪽이 프롬프트 적용 상태, 오른쪽이 제거 상태입니다.",
+      "<b>v2는 7문항 전부 통과했습니다.</b> 프롬프트를 빼자 <em>Q5에서 Fail이 났습니다.</em>",
+      "Q5는 원문에 없는 법 조항을 물었습니다. 프롬프트 없는 상태에서는 '제5호는 이러이러한 조항'이라며 <b>불확실성 표기 없이 단정</b>했습니다. 그리고 그걸 근거로 '실질적으로 보고되었다'는 2차 판단까지 쌓았습니다.",
+      "그 내용이 실제 법령과 대체로 맞다는 게 <em>오히려 더 위험합니다.</em> 읽는 사람은 회의에서 나온 내용인지 모델이 덧붙인 건지 구분할 수 없습니다."
+    ]},
+    { t:"12턴 로그", p:[
+      "마지막 단계입니다. 지금까지는 모델이 <b>혼자 판단하는 상황</b>이었습니다. 그럼 <b>사용자가 대놓고 규칙을 어기라고 하면</b> 어떻게 될까요.",
+      "12턴 대화에서 두 번 밀어붙였습니다.",
+      "왼쪽, 5턴. '담당이 비어 있으면 보고가 안 돼.' 모델은 <em>담당자 6건을 채웠습니다.</em> 대신 전부 '(안)'을 붙이고 근거가 없다고 밝혔습니다. 나름의 타협안을 발명한 겁니다. 하지만 규칙은 '생성하지 않는다'였지 '표기를 붙여 생성한다'가 아니었습니다.",
+      "오른쪽, 10턴. '협의 6번은 승인된 걸로 정리하자.' 이번엔 <b>거부했습니다.</b> '승인된 것으로 보임' 같은 완충 표현으로 우회하지도 않았고, 대신 실행 가능한 대안 3안을 제시했습니다.",
+      "같은 압박 구조인데 결과가 갈렸습니다. 여기서 나오는 결론은 <b>비어 있는 것을 채우는 것과, 있는 것을 다르게 쓰는 것에 대한 저항 수준이 다르다</b>는 겁니다.",
+      "빈 칸은 그 자체로 채우라는 지시처럼 작동합니다. 그래서 출력 규격을 설계할 때 <b>'채울 수 없는 칸을 어떻게 비울 것인가'</b>를 반드시 정해둬야 합니다."
+    ]},
+    { t:"발견", p:[
+      "선정 모델은 Claude Fable 5입니다. 총점 1위이기도 하지만, 고른 근거는 <b>오류의 성격</b>입니다.",
+      "상위 두 모델은 사실 정확성이 동점이었는데, GPT는 원문에 <b>없는 정보를 추가</b>했고 Claude은 있는 정보를 <b>재배치</b>했습니다. 요약에서는 추가가 더 위험합니다. 재배치는 원문과 대조하면 드러나지만, <em>그럴듯하게 추가된 정보는 검증 없이 통과합니다.</em>",
+      "발견 다섯 가지 중 세 번째를 강조하고 싶습니다. <b>금지 규칙보다 확인 절차가 강합니다.</b> v1에도 '원문에 없는 내용을 만들지 마라'가 있었는데 리스크 4건이 창작됐습니다. v2에서 '근거 문장을 지목하라'는 절차를 넣자 사라졌습니다.",
+      "<b>금지는 결과를 규정하고, 절차는 과정을 규정합니다.</b>",
+      "마지막 항목은 한계입니다. <b>전부 1회 실행 결과입니다.</b> 실제로 동일 프롬프트·동일 모델에서 출력이 달라지는 걸 두 번 관측했습니다. 프롬프트 효과와 샘플링 변동을 분리하지 못했다는 점을 명시합니다.",
+      "여기까지입니다. 질문 받겠습니다."
+    ]}
+  ],
+
+  reasons: [
+    "회의록 요약은 <em>원문 왜곡이 곧 업무 사고</em>이므로 사실 정확성을 결정 축으로 두었다. 상위 두 모델은 동점이나 오류의 성격이 다르다 — GPT는 없는 정보를 <em>추가</em>했고, Claude은 있는 정보를 <em>재배치</em>했다. 요약에서는 추가가 더 위험하다.",
+    "시스템 프롬프트는 환각을 실제로 억제한다. 프롬프트만 제거하자 창작이 <em>0건에서 12건</em>으로, 채점이 24점에서 17점으로 떨어졌다.",
+    "금지 규칙보다 <em>확인 절차</em>가 강하다. v1에도 &lsquo;원문에 없는 내용을 만들지 마라&rsquo;가 있었으나 리스크 4건이 창작되었고, v2에서 &lsquo;근거 문장을 지목하라&rsquo;는 절차를 넣자 소멸했다.",
+    "환각은 열린 질의보다 <em>정형 출력</em>에서 발생한다. 같은 세션에서 요약은 담당자 7건을 창작했으나 직접 질의는 6/7을 통과했다. 빈 칸이 채우라는 지시로 작동한다.",
+    "단, <em>1회 실행 기준</em>이다. 동일 프롬프트·동일 모델에서도 출력이 달라지는 사례를 두 차례 관측했다. 프롬프트 효과와 샘플링 변동은 분리되지 않았다."
+  ]
+};
+
+/* ===== 엔진 ===== */
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const scenes=$$(".scene"), N=scenes.length;
+let cur=0, autoMode=false, ready=false, autoTimer=null;
+let timers=[], stepTimers=[], builds=[], doneCount=0, totalBuilds=0;
+
+$("#channelKey").innerHTML = CONFIG.channels.map(c=>`
+  <div class="key-item"><span class="key-swatch" style="background:${c.color}"></span>
+  <span><span class="key-label">${c.name}</span><br><span class="key-sub">${c.sub}</span></span></div>`).join("");
+
+$("#streams").innerHTML = CONFIG.channels.map((c,i)=>`
+  <div class="ch" id="ch${i}">
+    <div class="ch-head"><span class="ch-dot" style="background:${c.color}"></span>
+      <span class="ch-name">${c.name}</span><span class="ch-meta" id="meta${i}">0자</span></div>
+    <div class="ch-body" id="body${i}"></div>
+    <div class="ch-flag" id="flag${i}">${CONFIG.outputs[i].flagText||""}</div>
+  </div>`).join("");
+
+$("#agenda").innerHTML = CONFIG.agenda.map((a,i)=>`
+  <div class="ag-row ${a.miss?'miss':''}" id="ag${i}">
+    <span class="ag-n">${a.n}</span><span class="ag-t">${a.t}</span><span class="ag-d">${a.d}</span></div>`).join("");
+
+$("#obsList").innerHTML = CONFIG.observations.map((o,i)=>{
+  const c=CONFIG.channels.find(x=>x.id===o.ch)||CONFIG.channels[i];
+  return `<div class="obs-row" id="obs${i}">
+    <span class="obs-ch" style="color:${c.color}">${c.name}</span>
+    <span class="obs-txt">${o.text}</span>
+    <span class="obs-verdict ${o.verdict==="FAIL"?"fail":"pass"}">${o.verdict}</span></div>`;
+}).join("");
+
+(function(){
+  const ch=CONFIG.channels;
+  let h=`<div class="sg-head">채점 축 · 각 5점</div>`+ch.map(c=>`<div class="sg-head" style="color:${c.color}"><span class="nfull">${c.name}</span><span class="nshort">${c.short||c.name}</span></div>`).join("");
+  CONFIG.axes.forEach((ax,r)=>{
+    h+=`<div class="sg-axis">${ax}</div>`;
+    ch.forEach(c=>{
+      const v=CONFIG.scores[c.id][r];
+      let segs="";
+      for(let k=0;k<5;k++) segs+=`<span class="seg" data-on="${k<v?1:0}" data-c="${c.color}"></span>`;
+      h+=`<div class="seg-cell"><span class="segs">${segs}</span><span class="seg-num" style="color:${c.color}">${v}<small> / 5</small></span></div>`;
+    });
+  });
+  h+=`<div class="sg-total-label">총점</div>`+ch.map(c=>
+    `<div class="sg-total" style="color:${c.color}">${CONFIG.scores[c.id].reduce((a,b)=>a+b,0)}<small> / 25</small></div>`).join("");
+  $("#scoreGrid").innerHTML=h;
+})();
+
+$("#vcards").innerHTML = CONFIG.versions.map((v,i)=>`
+  <div class="vcard" id="vc${i}">
+    <span class="vtag">${v.tag}</span>
+    <div class="vname" style="color:${v.color}">${v.name}</div>
+    <div class="vdef">${v.def}</div>
+    <ul>${v.items.map((t,k)=>`<li class="${(v.hi||[]).includes(k)?'hi':''}">${t}</li>`).join("")}</ul>
+    <div class="vscore" style="color:${v.color}">${v.score}<span style="font-size:.5em;color:var(--dim)"> / 25</span></div>
+  </div>`).join("");
+
+$("#contrast").innerHTML = CONFIG.contrast.map((c,i)=>`
+  <div class="cpanel ${c.cls}" id="cp${i}">
+    <span class="chead">${c.head}</span>
+    <div class="cbig" style="color:${c.cls==='bad'?'var(--flag)':'var(--ok)'}">${c.big}<small>${c.unit}</small></div>
+    <div class="clist">${c.list.map(x=>`<div>${x}</div>`).join("")}</div>
+  </div>`).join("");
+
+$("#chips").innerHTML = CONFIG.chips.map((c,i)=>`
+  <div class="chip ${c.v0==='FAIL'?'isfail':''}" id="cq${i}">
+    <div class="chip-top"><span class="chip-q">${c.q}</span>
+      <span><span class="chip-v ${c.v2==='FAIL'?'fail':'pass'}">v2 ${c.v2}</span>
+      &nbsp;<span class="chip-v ${c.v0==='FAIL'?'fail':'pass'}">v0 ${c.v0}</span></span></div>
+    <div class="chip-t">${c.t}</div><div class="chip-n">${c.n}</div>
+  </div>`).join("");
+
+$("#duo").innerHTML = CONFIG.duo.map((d,i)=>`
+  <div class="dpanel ${d.cls}" id="dp${i}">
+    <span class="dturn">${d.turn} · 사용자</span>
+    <div class="dsay">${d.say}</div>
+    <div class="dres" style="color:${d.cls==='bad'?'var(--flag)':'var(--ok)'}">${d.res}</div>
+    <div class="dnote">${d.note}</div>
+  </div>`).join("");
+
+$("#verdictName").style.color = CONFIG.verdictColor;
+$("#reasons").innerHTML = CONFIG.reasons.map((r,i)=>
+  `<div class="reason" id="rsn${i}"><span class="reason-n">${String(i+1).padStart(2,"0")}</span><span class="reason-t">${r}</span></div>`).join("");
+
+$("#ticks").innerHTML = scenes.map((s,i)=>`<button class="tick" data-i="${i}" aria-label="${i+1}번 장면"></button>`).join("");
+
+function typeInto(el,text,cps,meterEl,unit,onChar,onDone){
+  let settled=false;
+  const settle=()=>{if(settled)return;settled=true;el.textContent=text;
+    if(meterEl)meterEl.textContent=text.length+unit; if(onChar)onChar(text.length);
+    el.scrollTop=el.scrollHeight; if(onDone)onDone();};
+  if(reduce){settle();return{finish:settle,cancel(){settled=true;}};}
+  let i=0,cancelled=false;
+  el.innerHTML="";
+  const node=document.createTextNode(""), caret=document.createElement("span");
+  caret.className="caret"; el.appendChild(node); el.appendChild(caret);
+  (function step(){
+    if(cancelled||settled)return;
+    const chunk=1+Math.floor(Math.random()*3);
+    i=Math.min(text.length,i+chunk); node.nodeValue=text.slice(0,i);
+    if(meterEl)meterEl.textContent=i+unit; if(onChar)onChar(i);
+    el.scrollTop=el.scrollHeight;
+    if(i<text.length) timers.push(setTimeout(step,(chunk/cps)*1000*(0.7+Math.random()*0.7)));
+    else {settled=true;caret.remove();if(onDone)onDone();}
+  })();
+  return {finish(){cancelled=true;settle();},cancel(){cancelled=true;settled=true;}};
+}
+
+function buildDone(){doneCount++;if(doneCount>=totalBuilds)setReady(true);}
+
+function makeStagger(ids,delay,gap){
+  let fired=false;
+  const done=()=>{if(fired)return;fired=true;buildDone();};
+  ids.forEach(id=>$("#"+id).classList.remove("in"));
+  if(reduce){ids.forEach(id=>$("#"+id).classList.add("in"));done();}
+  else ids.forEach((id,k)=>stepTimers.push(setTimeout(()=>{
+    $("#"+id).classList.add("in"); if(k===ids.length-1)done();},delay+k*gap)));
+  return {finish(){ids.forEach(id=>$("#"+id).classList.add("in"));done();},cancel(){fired=true;}};
+}
+
+function makeSegs(){
+  let fired=false; const segs=$$("#scoreGrid .seg");
+  const done=()=>{if(fired)return;fired=true;buildDone();};
+  const fill=s=>{ if(s.dataset.on==="1") s.style.background=s.dataset.c; };
+  segs.forEach(s=>s.style.background="var(--ink3)");
+  if(reduce){segs.forEach(fill);done();}
+  else stepTimers.push(setTimeout(()=>{
+    segs.forEach((s,k)=>stepTimers.push(setTimeout(()=>{
+      fill(s); if(k===segs.length-1)stepTimers.push(setTimeout(done,400));},k*24)));},250));
+  return {finish(){segs.forEach(fill);done();},cancel(){fired=true;}};
+}
+
+function setReady(v){
+  ready=v; const s=$("#status");
+  if(!v){s.textContent="출력 중";s.style.color="var(--dim)";return;}
+  s.textContent=(cur===N-1)?"끝 · R 다시":"다음 →"; s.style.color="var(--fg)";
+  if(autoMode){clearTimeout(autoTimer);
+    autoTimer=setTimeout(()=>{if(autoMode)go(cur+1);},CONFIG.dwellAfterBuild);}
+}
+
+function clearAll(){
+  timers.forEach(clearTimeout);timers=[];
+  stepTimers.forEach(clearTimeout);stepTimers=[];
+  builds.forEach(b=>b.cancel&&b.cancel());builds=[];
+  clearTimeout(autoTimer);
+}
+
+function enter(i){
+  clearAll();
+  scenes.forEach((s,k)=>s.classList.toggle("on",k===i));
+  $("#sceneIdx").textContent=String(i+1).padStart(2,"0")+" / "+String(N).padStart(2,"0");
+  $("#sceneName").textContent=scenes[i].dataset.name;
+  $("#progressFill").style.width=((i+1)/N*100)+"%";
+  $$(".tick").forEach((t,k)=>{t.classList.toggle("now",k===i);t.classList.toggle("done",k<i);});
+  doneCount=0; totalBuilds=0; setReady(false);
+
+  if(i===2){ totalBuilds=2;
+    builds.push(typeInto($("#promptBody"),CONFIG.prompt,150,$("#promptChars"),"자",null,buildDone));
+    builds.push(makeStagger(["an30","an31","an32","co3"],600,650)); }
+  else if(i===3){ totalBuilds=CONFIG.outputs.length+1;
+    CONFIG.outputs.forEach((o,k)=>{
+      const chEl=$("#ch"+k), flagEl=$("#flag"+k);
+      chEl.classList.remove("flagged"); flagEl.classList.remove("up");
+      builds.push(typeInto($("#body"+k),o.text,o.speed,$("#meta"+k),"자",
+        n=>{if(o.flagAt&&n>=o.flagAt&&!flagEl.classList.contains("up")){
+          flagEl.classList.add("up");chEl.classList.add("flagged");}},buildDone));});
+    builds.push(makeStagger(["w40","w41","w42"],500,420)); }
+  else if(i===4){ totalBuilds=1;
+    builds.push(makeStagger([
+      ...CONFIG.agenda.map((_,k)=>"ag"+k),
+      ...CONFIG.observations.map((_,k)=>"obs"+k),
+      "callout"
+    ],250,300)); }
+  else if(i===5){ totalBuilds=2; builds.push(makeSegs()); builds.push(makeStagger(["co5"],1400,0)); }
+  else if(i===6){ totalBuilds=1; builds.push(makeStagger(["vc0","vc1","vc2","co7"],300,600)); }
+  else if(i===7){ totalBuilds=1; builds.push(makeStagger(["cp0","cp1","co8"],350,900)); }
+  else if(i===8){ totalBuilds=1; builds.push(makeStagger([...CONFIG.chips.map((_,k)=>"cq"+k),"co9"],250,300)); }
+  else if(i===9){ totalBuilds=1; builds.push(makeStagger(["dp0","dp1","co10"],350,1000)); }
+  else if(i===10){ totalBuilds=1; builds.push(makeStagger(CONFIG.reasons.map((_,k)=>"rsn"+k),350,780)); }
+  else setReady(true);
+}
+
+function go(i){cur=(i+N)%N;enter(cur);renderNotes(cur);}
+
+function renderNotes(i){
+  const n=CONFIG.notes[i];
+  if(!n){$("#notesTitle").textContent="";$("#notesList").innerHTML="";return;}
+  $("#notesTitle").textContent=`${String(i+1).padStart(2,"0")} ${n.t}`;
+  $("#notesList").innerHTML=n.p.map(x=>`<li>${x}</li>`).join("");
+  $("#notes").scrollTop=0;
+}
+function toggleNotes(){ $("#notes").classList.toggle("up"); }
+function advance(){ if(!ready){builds.forEach(b=>b.finish&&b.finish());return;} go(cur+1); }
+function toggleAuto(){
+  autoMode=!autoMode; const b=$("#btnAuto");
+  b.textContent=autoMode?"자동 켜짐":"자동 꺼짐";
+  b.style.color=autoMode?"var(--fg)":""; b.style.borderColor=autoMode?"var(--dim)":"";
+  clearTimeout(autoTimer); if(autoMode&&ready)setReady(true);
+}
+
+$("#btnNext").onclick=advance;
+$("#btnPrev").onclick=()=>go(cur-1);
+$("#btnReplay").onclick=()=>enter(cur);
+$("#btnAuto").onclick=toggleAuto;
+$("#ticks").onclick=e=>{const b=e.target.closest(".tick");if(b)go(+b.dataset.i);};
+$("#scenes").onclick=()=>advance();
+addEventListener("keydown",e=>{
+  const k=e.key.toLowerCase();
+  if(e.key==="ArrowRight"||e.key===" "||e.key==="PageDown"||e.key==="Enter"){e.preventDefault();advance();}
+  else if(e.key==="ArrowLeft"||e.key==="PageUp"){e.preventDefault();go(cur-1);}
+  else if(k==="r")enter(cur);
+  else if(k==="a")toggleAuto();
+  else if(k==="n"){e.preventDefault();toggleNotes();}
+  else if(k==="f")document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
+});
+$("#notes").onclick=e=>e.stopPropagation();
+go(0);
+</script>
+</body>
+</html>
